@@ -30,27 +30,27 @@
 #include "nav2_util/odometry_utils.hpp"
 #include "nav2_util/geometry_utils.hpp"
 #include "geometry_msgs/msg/pose2_d.hpp"
-#include "nav2_pure_pursuit_controller/pid.hpp"
+#include "nav2_omni_pure_pursuit_controller/pid.hpp"
 
-namespace nav2_pure_pursuit_controller
+namespace nav2_omni_pure_pursuit_controller
 {
 
 /**
- * @class nav2_regulated_pure_pursuit_controller::PurePursuitController
+ * @class nav2_omni_pure_pursuit_controller::PurePursuitController
  * @brief Regulated pure pursuit controller plugin
  */
-class PurePursuitController : public nav2_core::Controller
+class OmniPurePursuitController : public nav2_core::Controller
 {
 public:
   /**
    * @brief Constructor for nav2_regulated_pure_pursuit_controller::PurePursuitController
    */
-  PurePursuitController() = default;
+  OmniPurePursuitController() = default;
 
   /**
    * @brief Destrructor for nav2_regulated_pure_pursuit_controller::PurePursuitController
    */
-  ~PurePursuitController() override = default;
+  ~OmniPurePursuitController() override = default;
 
   /**
    * @brief Configure controller state machine
@@ -147,8 +147,6 @@ protected:
   const geometry_msgs::msg::Point & p1,
   const geometry_msgs::msg::Point & p2,
   double r);
-
-  double angleWrap(double angle);
 
   rcl_interfaces::msg::SetParametersResult
   dynamicParametersCallback(std::vector<rclcpp::Parameter> parameters);

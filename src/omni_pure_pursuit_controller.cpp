@@ -13,7 +13,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "nav2_pure_pursuit_controller/pure_pursuit_controller.hpp"
+#include "nav2_omni_pure_pursuit_controller/omni_pure_pursuit_controller.hpp"
 
 #include <algorithm>
 #include <limits>
@@ -36,9 +36,9 @@ using std::min;
 using namespace nav2_costmap_2d;  // NOLINT
 using rcl_interfaces::msg::ParameterType;
 
-namespace nav2_pure_pursuit_controller {
+namespace nav2_omni_pure_pursuit_controller {
 
-void PurePursuitController::configure(
+void OmniPurePursuitController::configure(
     const rclcpp_lifecycle::LifecycleNode::WeakPtr &parent, std::string name,
     std::shared_ptr<tf2_ros::Buffer> tf,
     std::shared_ptr<nav2_costmap_2d::Costmap2DROS> costmap_ros) {
@@ -121,20 +121,20 @@ void PurePursuitController::configure(
   heading_pid = std::make_shared<PID>(control_duration_, 2, -2, heading_kp_, heading_kd_, heading_ki_);
 }
 
-void PurePursuitController::cleanup() {
+void OmniPurePursuitController::cleanup() {
   RCLCPP_INFO(logger_,
               "Cleaning up controller: %s of type"
-              " regulated_pure_pursuit_controller::PurePursuitController",
+              " nav2_omni_pure_pursuit_controller::OmniPurePursuitController",
               plugin_name_.c_str());
   global_path_pub_.reset();
   carrot_pub_.reset();
   carrot_arc_pub_.reset();
 }
 
-void PurePursuitController::activate() {
+void OmniPurePursuitController::activate() {
   RCLCPP_INFO(logger_,
               "Activating controller: %s of type "
-              "regulated_pure_pursuit_controller::PurePursuitController",
+              "regulated_pure_pursuit_controller::OmniPurePursuitController",
               plugin_name_.c_str());
   global_path_pub_->on_activate();
   carrot_pub_->on_activate();
@@ -142,14 +142,14 @@ void PurePursuitController::activate() {
   // Add callback for dynamic parameters
   auto node = node_.lock();
   dyn_params_handler_ = node->add_on_set_parameters_callback(
-      std::bind(&PurePursuitController::dynamicParametersCallback, this,
+      std::bind(&OmniPurePursuitController::dynamicParametersCallback, this,
                 std::placeholders::_1));
 }
 
-void PurePursuitController::deactivate() {
+void OmniPurePursuitController::deactivate() {
   RCLCPP_INFO(logger_,
               "Deactivating controller: %s of type "
-              "regulated_pure_pursuit_controller::PurePursuitController",
+              "regulated_pure_pursuit_controller::OmniPurePursuitController",
               plugin_name_.c_str());
   global_path_pub_->on_deactivate();
   carrot_pub_->on_deactivate();
@@ -158,7 +158,7 @@ void PurePursuitController::deactivate() {
 }
 
 
-geometry_msgs::msg::TwistStamped PurePursuitController::computeVelocityCommands(
+geometry_msgs::msg::TwistStamped OmniPurePursuitController::computeVelocityCommands(
     const geometry_msgs::msg::PoseStamped &pose,
     const geometry_msgs::msg::Twist & /*velocity*/,
     nav2_core::GoalChecker * /*goal_checker*/) {
@@ -172,15 +172,17 @@ geometry_msgs::msg::TwistStamped PurePursuitController::computeVelocityCommands(
 
   
   auto carrot_pose = getLookAheadPoint(lookahead_distance_, transformed_plan);
+  auto carrot_msg = createCarrotMsg(carrot_pose);
+  carrot_pub_->publish(createCarrotMsg(carrot_pose));
   // Find distance^2 to look ahead point (carrot) in robot base frame
   // This is the chord length of the circle
   double lin_dist = hypot(carrot_pose.pose.position.x, carrot_pose.pose.position.y);
   double theta_dist = atan2(carrot_pose.pose.position.y, carrot_pose.pose.position.x);
   double heading_dist = carrot_pose.pose.orientation.z;
 
-  RCLCPP_INFO(logger_,
-              "linear : %lf heading : %lf",
-              lin_dist ,heading_dist);
+  // RCLCPP_INFO(logger_,
+  //             "linear : %lf heading : %lf",
+  //             lin_dist ,heading_dist);
 
   auto lin_vel = move_pid->calculate(lin_dist,0);
   auto angular_vel = heading_pid->calculate(heading_dist,0);
@@ -193,26 +195,11 @@ geometry_msgs::msg::TwistStamped PurePursuitController::computeVelocityCommands(
   return cmd_vel;
 }
 
-double PurePursuitController::angleWrap(double angle) {
-    
-    if(angle >= M_PI)
-    {
-      angle -= 2*M_PI;
-    }
-
-    else if(angle < -M_PI)
-    {
-      angle += 2*M_PI;
-    }
-
-    return angle;
-}
-
-void PurePursuitController::setPlan(const nav_msgs::msg::Path &path) {
+void OmniPurePursuitController::setPlan(const nav_msgs::msg::Path &path) {
   global_plan_ = path;
 }
 
-void PurePursuitController::setSpeedLimit(const double &/*speed_limit*/,
+void OmniPurePursuitController::setSpeedLimit(const double &/*speed_limit*/,
                                           const bool &/*percentage*/) {
   // if (speed_limit == nav2_costmap_2d::NO_SPEED_LIMIT) {
   //   // Restore default value
@@ -229,7 +216,7 @@ void PurePursuitController::setSpeedLimit(const double &/*speed_limit*/,
 }
 
 
-nav_msgs::msg::Path PurePursuitController::transformGlobalPlan(
+nav_msgs::msg::Path OmniPurePursuitController::transformGlobalPlan(
     const geometry_msgs::msg::PoseStamped &pose) {
   if (global_plan_.poses.empty()) {
     throw nav2_core::PlannerException("Received plan with zero length");
@@ -302,7 +289,7 @@ nav_msgs::msg::Path PurePursuitController::transformGlobalPlan(
   
 }
 
-std::unique_ptr<geometry_msgs::msg::PointStamped> PurePursuitController::createCarrotMsg(
+std::unique_ptr<geometry_msgs::msg::PointStamped> OmniPurePursuitController::createCarrotMsg(
   const geometry_msgs::msg::PoseStamped & carrot_pose)
 {
   auto carrot_msg = std::make_unique<geometry_msgs::msg::PointStamped>();
@@ -313,7 +300,7 @@ std::unique_ptr<geometry_msgs::msg::PointStamped> PurePursuitController::createC
   return carrot_msg;
 }
 
-geometry_msgs::msg::PoseStamped PurePursuitController::getLookAheadPoint(
+geometry_msgs::msg::PoseStamped OmniPurePursuitController::getLookAheadPoint(
   const double & lookahead_dist,
   const nav_msgs::msg::Path & transformed_plan)
 {
@@ -348,7 +335,7 @@ geometry_msgs::msg::PoseStamped PurePursuitController::getLookAheadPoint(
   return *goal_pose_it;
 }
 
-geometry_msgs::msg::Point PurePursuitController::circleSegmentIntersection(
+geometry_msgs::msg::Point OmniPurePursuitController::circleSegmentIntersection(
   const geometry_msgs::msg::Point & p1,
   const geometry_msgs::msg::Point & p2,
   double r)
@@ -384,13 +371,13 @@ geometry_msgs::msg::Point PurePursuitController::circleSegmentIntersection(
 }
 
 
-double PurePursuitController::getCostmapMaxExtent() const
+double OmniPurePursuitController::getCostmapMaxExtent() const
 {
   const double max_costmap_dim_meters = std::max(
     costmap_->getSizeInMetersX(), costmap_->getSizeInMetersY());
   return max_costmap_dim_meters / 2.0;
 }
-bool PurePursuitController::transformPose(
+bool OmniPurePursuitController::transformPose(
     const std::string frame, const geometry_msgs::msg::PoseStamped &in_pose,
     geometry_msgs::msg::PoseStamped &out_pose) const {
   if (in_pose.header.frame_id == frame) {
@@ -409,7 +396,7 @@ bool PurePursuitController::transformPose(
 }
 
 rcl_interfaces::msg::SetParametersResult
-PurePursuitController::dynamicParametersCallback(
+OmniPurePursuitController::dynamicParametersCallback(
     std::vector<rclcpp::Parameter> parameters) {
   rcl_interfaces::msg::SetParametersResult result;
   std::lock_guard<std::mutex> lock_reinit(mutex_);
@@ -448,5 +435,5 @@ PurePursuitController::dynamicParametersCallback(
 }  // namespace nav2_pure_pursuit_controller
 
 // Register this controller as a nav2_core plugin
-PLUGINLIB_EXPORT_CLASS(nav2_pure_pursuit_controller::PurePursuitController,
+PLUGINLIB_EXPORT_CLASS(nav2_omni_pure_pursuit_controller::OmniPurePursuitController,
                        nav2_core::Controller)

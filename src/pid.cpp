@@ -25,7 +25,7 @@
 
 #include <iostream>
 #include <cmath>
-#include "nav2_pure_pursuit_controller/pid.hpp"
+#include "nav2_omni_pure_pursuit_controller/pid.hpp"
 
 using namespace std;
 
