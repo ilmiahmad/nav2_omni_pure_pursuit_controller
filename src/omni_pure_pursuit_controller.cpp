@@ -57,8 +57,7 @@ void OmniPurePursuitController::configure(
 
   double transform_tolerance = 1.0;
   double control_frequency = 20.0;
-  use_interpolation_ = false;
-  lookahead_distance_ = 0.3;
+
   //goal_dist_tol_ = 0.25;  // reasonable default before first update
 
   declare_parameter_if_not_declared(node, plugin_name_ + ".moving_kp",
@@ -75,21 +74,31 @@ void OmniPurePursuitController::configure(
                                     rclcpp::ParameterValue(0.3));
   declare_parameter_if_not_declared(node, plugin_name_ + ".transform_tolerance",
                                     rclcpp::ParameterValue(0.1));
-  declare_parameter_if_not_declared(
-      node, plugin_name_ + ".min_max_sum_error",
-      rclcpp::ParameterValue(1.0));
-  declare_parameter_if_not_declared(
-      node, plugin_name_ + ".max_robot_pose_search_dist",
-      rclcpp::ParameterValue(0.5));
-      
+  declare_parameter_if_not_declared(node, plugin_name_ + ".min_max_sum_error",
+                                    rclcpp::ParameterValue(1.0));
+  declare_parameter_if_not_declared(node, plugin_name_ + ".lookahead_distance",
+                                    rclcpp::ParameterValue(0.3));
+  declare_parameter_if_not_declared(node, plugin_name_ + ".adaptive_lookahead_distance",
+                                    rclcpp::ParameterValue(true));
+  declare_parameter_if_not_declared(node, plugin_name_ + ".adaptive_min_speed_lookahead",
+                                    rclcpp::ParameterValue(0.2));
+  declare_parameter_if_not_declared(node, plugin_name_ + ".adaptive_max_speed_lookahead",
+                                    rclcpp::ParameterValue(1.0));
+  declare_parameter_if_not_declared(node, plugin_name_ + ".adaptive_lookahead_gain",
+                                    rclcpp::ParameterValue(1.0));
+  declare_parameter_if_not_declared(node, plugin_name_ + ".circle_interpolation",
+                                    rclcpp::ParameterValue(true));
+
   node->get_parameter(plugin_name_ + ".moving_kp",
                       moving_kp_);
-  node->get_parameter(plugin_name_ + ".moving_ki", moving_ki_);
+  node->get_parameter(plugin_name_ + ".moving_ki", 
+                      moving_ki_);
   node->get_parameter(plugin_name_ + ".moving_kd",
                       moving_kd_);
   node->get_parameter(plugin_name_ + ".heading_kp",
                       heading_kp_);
-  node->get_parameter(plugin_name_ + ".heading_ki", heading_ki_);
+  node->get_parameter(plugin_name_ + ".heading_ki", 
+                      heading_ki_);
   node->get_parameter(plugin_name_ + ".heading_kd",
                       heading_kd_);
   node->get_parameter(plugin_name_ + ".transform_tolerance",
@@ -98,6 +107,16 @@ void OmniPurePursuitController::configure(
                       min_max_sum_error_);
   node->get_parameter(plugin_name_ + ".lookahead_distance",
                       lookahead_distance_);
+  node->get_parameter(plugin_name_ + ".adaptive_lookahead_distance",
+                      adaptive_lookahead_distance_);
+  node->get_parameter(plugin_name_ + ".adaptive_min_speed_lookahead",
+                      adaptive_min_speed_lookahead_);
+  node->get_parameter(plugin_name_ + ".adaptive_max_speed_lookahead",
+                      adaptive_max_speed_lookahead_);
+  node->get_parameter(plugin_name_ + ".adaptive_lookahead_gain",
+                      adaptive_lookahead_gain_);
+  node->get_parameter(plugin_name_ + ".circle_interpolation",
+                      circle_interpolation_);
 
   node->get_parameter("controller_frequency", control_frequency);
 
@@ -160,7 +179,7 @@ void OmniPurePursuitController::deactivate() {
 
 geometry_msgs::msg::TwistStamped OmniPurePursuitController::computeVelocityCommands(
     const geometry_msgs::msg::PoseStamped &pose,
-    const geometry_msgs::msg::Twist & /*velocity*/,
+    const geometry_msgs::msg::Twist & velocity,
     nav2_core::GoalChecker * /*goal_checker*/) {
   std::lock_guard<std::mutex> lock_reinit(mutex_);
 
@@ -170,8 +189,8 @@ geometry_msgs::msg::TwistStamped OmniPurePursuitController::computeVelocityComma
   // Transform path to robot base frame
   auto transformed_plan = transformGlobalPlan(pose);
 
-  
-  auto carrot_pose = getLookAheadPoint(lookahead_distance_, transformed_plan);
+  auto lookahead = getLookAheadDistance(velocity);
+  auto carrot_pose = getLookAheadPoint(lookahead, transformed_plan);
   auto carrot_msg = createCarrotMsg(carrot_pose);
   carrot_pub_->publish(createCarrotMsg(carrot_pose));
   // Find distance^2 to look ahead point (carrot) in robot base frame
@@ -231,17 +250,17 @@ nav_msgs::msg::Path OmniPurePursuitController::transformGlobalPlan(
 
   // We'll discard points on the plan that are outside the local costmap
   double max_costmap_extent = getCostmapMaxExtent();
-  // double max_robot_pose_search_dist_ = 0.5;
-  // auto closest_pose_upper_bound =
-  //     nav2_util::geometry_utils::first_after_integrated_distance(
-  //         global_plan_.poses.begin(), global_plan_.poses.end(),
-  //         max_robot_pose_search_dist_);
+  double max_robot_pose_search_dist_ = 0.2;
+  auto closest_pose_upper_bound =
+      nav2_util::geometry_utils::first_after_integrated_distance(
+          global_plan_.poses.begin(), global_plan_.poses.end(),
+          max_robot_pose_search_dist_);
 
   // First find the closest pose on the path to the robot
   // bounded by when the path turns around (if it does) so we don't get a pose
   // from a later portion of the path
   auto transformation_begin = nav2_util::geometry_utils::min_by(
-      global_plan_.poses.begin(), global_plan_.poses.end(),
+      global_plan_.poses.begin(), closest_pose_upper_bound,
       [&robot_pose](const geometry_msgs::msg::PoseStamped &ps) {
         return euclidean_distance(robot_pose, ps);
       });
@@ -313,24 +332,23 @@ geometry_msgs::msg::PoseStamped OmniPurePursuitController::getLookAheadPoint(
   // If the no pose is not far enough, take the last pose
   if (goal_pose_it == transformed_plan.poses.end()) {
     goal_pose_it = std::prev(transformed_plan.poses.end());
-    //goal_pose_it = transformed_plan.poses.begin();
   } 
-  //   else if (use_interpolation_ && goal_pose_it != transformed_plan.poses.begin()) {
-  //   // Find the point on the line segment between the two poses
-  //   // that is exactly the lookahead distance away from the robot pose (the origin)
-  //   // This can be found with a closed form for the intersection of a segment and a circle
-  //   // Because of the way we did the std::find_if, prev_pose is guaranteed to be inside the circle,
-  //   // and goal_pose is guaranteed to be outside the circle.
-  //   auto prev_pose_it = std::prev(goal_pose_it);
-  //   auto point = circleSegmentIntersection(
-  //     prev_pose_it->pose.position,
-  //     goal_pose_it->pose.position, lookahead_dist);
-  //   geometry_msgs::msg::PoseStamped pose;
-  //   pose.header.frame_id = prev_pose_it->header.frame_id;
-  //   pose.header.stamp = goal_pose_it->header.stamp;
-  //   pose.pose.position = point;
-  //   return pose;
-  // }
+    else if (circle_interpolation_ && goal_pose_it != transformed_plan.poses.begin()) {
+    // Find the point on the line segment between the two poses
+    // that is exactly the lookahead distance away from the robot pose (the origin)
+    // This can be found with a closed form for the intersection of a segment and a circle
+    // Because of the way we did the std::find_if, prev_pose is guaranteed to be inside the circle,
+    // and goal_pose is guaranteed to be outside the circle.
+    auto prev_pose_it = std::prev(goal_pose_it);
+    auto point = circleSegmentIntersection(
+      prev_pose_it->pose.position,
+      goal_pose_it->pose.position, lookahead_dist);
+    geometry_msgs::msg::PoseStamped pose;
+    pose.header.frame_id = prev_pose_it->header.frame_id;
+    pose.header.stamp = goal_pose_it->header.stamp;
+    pose.pose.position = point;
+    return pose;
+  }
 
   return *goal_pose_it;
 }
@@ -430,6 +448,22 @@ OmniPurePursuitController::dynamicParametersCallback(
   }
   result.successful = true;
   return result;
+}
+
+double OmniPurePursuitController::getLookAheadDistance(
+  const geometry_msgs::msg::Twist & speed)
+{
+  // If using velocity-scaled look ahead distances, find and clamp the dist
+  // Else, use the static look ahead distance
+  double lookahead_dist = lookahead_distance_;
+
+  if (adaptive_lookahead_distance_) {
+    
+    lookahead_dist = hypot(speed.linear.x, speed.linear.y) * adaptive_lookahead_gain_;
+    lookahead_dist = std::clamp(lookahead_dist, adaptive_min_speed_lookahead_, adaptive_max_speed_lookahead_);
+  }
+
+  return lookahead_dist;
 }
 
 }  // namespace nav2_pure_pursuit_controller

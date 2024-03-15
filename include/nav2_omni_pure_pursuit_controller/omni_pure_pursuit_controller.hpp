@@ -151,6 +151,9 @@ protected:
   rcl_interfaces::msg::SetParametersResult
   dynamicParametersCallback(std::vector<rclcpp::Parameter> parameters);
 
+  double getLookAheadDistance(
+  const geometry_msgs::msg::Twist & speed);
+
   std::pair<double, double> PIDUpdate(double kp, double ki, double kd, double error, double sum_error);
 
   rclcpp_lifecycle::LifecycleNode::WeakPtr node_;
@@ -171,6 +174,11 @@ protected:
   double max_robot_pose_search_dist_;
   bool use_interpolation_;
   double lookahead_distance_;
+  bool adaptive_lookahead_distance_;
+  double adaptive_min_speed_lookahead_;
+  double adaptive_max_speed_lookahead_;
+  double adaptive_lookahead_gain_;
+  bool circle_interpolation_;
   tf2::Duration transform_tolerance_;
  
 
