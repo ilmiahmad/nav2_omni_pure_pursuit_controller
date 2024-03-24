@@ -60,17 +60,17 @@ void OmniPurePursuitController::configure(
 
   //goal_dist_tol_ = 0.25;  // reasonable default before first update
 
-  declare_parameter_if_not_declared(node, plugin_name_ + ".moving_kp",
+  declare_parameter_if_not_declared(node, plugin_name_ + ".translation_kp",
                                     rclcpp::ParameterValue(3.0));
-  declare_parameter_if_not_declared(node, plugin_name_ + ".moving_ki",
+  declare_parameter_if_not_declared(node, plugin_name_ + ".translation_ki",
                                     rclcpp::ParameterValue(0.1));
-  declare_parameter_if_not_declared(node, plugin_name_ + ".moving_kd",
+  declare_parameter_if_not_declared(node, plugin_name_ + ".translation_kd",
                                     rclcpp::ParameterValue(0.3));
-  declare_parameter_if_not_declared(node, plugin_name_ + ".heading_kp",
+  declare_parameter_if_not_declared(node, plugin_name_ + ".rotation_kp",
                                     rclcpp::ParameterValue(3.0));
-  declare_parameter_if_not_declared(node, plugin_name_ + ".heading_ki",
+  declare_parameter_if_not_declared(node, plugin_name_ + ".rotation_ki",
                                     rclcpp::ParameterValue(0.1));
-  declare_parameter_if_not_declared(node, plugin_name_ + ".heading_kd",
+  declare_parameter_if_not_declared(node, plugin_name_ + ".rotation_kd",
                                     rclcpp::ParameterValue(0.3));
   declare_parameter_if_not_declared(node, plugin_name_ + ".transform_tolerance",
                                     rclcpp::ParameterValue(0.1));
@@ -88,19 +88,31 @@ void OmniPurePursuitController::configure(
                                     rclcpp::ParameterValue(1.0));
   declare_parameter_if_not_declared(node, plugin_name_ + ".circle_interpolation",
                                     rclcpp::ParameterValue(true));
+  declare_parameter_if_not_declared(node, plugin_name_ + ".rotate_to_heading",
+                                    rclcpp::ParameterValue(true));
+  declare_parameter_if_not_declared(node, plugin_name_ + ".rotate_to_heading_treshold",
+                                    rclcpp::ParameterValue(0.1));
+  declare_parameter_if_not_declared(node, plugin_name_ + ".min_translation_speed",
+                                    rclcpp::ParameterValue(-3.0));
+  declare_parameter_if_not_declared(node, plugin_name_ + ".max_translation_speed",
+                                    rclcpp::ParameterValue(3.0));
+  declare_parameter_if_not_declared(node, plugin_name_ + ".min_rotation_speed",
+                                    rclcpp::ParameterValue(-3.0));
+  declare_parameter_if_not_declared(node, plugin_name_ + ".max_rotation_speed",
+                                    rclcpp::ParameterValue(3.0));                                  
 
-  node->get_parameter(plugin_name_ + ".moving_kp",
-                      moving_kp_);
-  node->get_parameter(plugin_name_ + ".moving_ki", 
-                      moving_ki_);
-  node->get_parameter(plugin_name_ + ".moving_kd",
-                      moving_kd_);
-  node->get_parameter(plugin_name_ + ".heading_kp",
-                      heading_kp_);
-  node->get_parameter(plugin_name_ + ".heading_ki", 
-                      heading_ki_);
-  node->get_parameter(plugin_name_ + ".heading_kd",
-                      heading_kd_);
+  node->get_parameter(plugin_name_ + ".translation_kp",
+                      translation_kp_);
+  node->get_parameter(plugin_name_ + ".translation_ki", 
+                      translation_ki_);
+  node->get_parameter(plugin_name_ + ".translation_kd",
+                      translation_kd_);
+  node->get_parameter(plugin_name_ + ".rotation_kp",
+                      rotation_kp_);
+  node->get_parameter(plugin_name_ + ".rotation_ki", 
+                      rotation_ki_);
+  node->get_parameter(plugin_name_ + ".rotation_kd",
+                      rotation_kd_);
   node->get_parameter(plugin_name_ + ".transform_tolerance",
                       transform_tolerance);
   node->get_parameter(plugin_name_ + ".min_max_sum_error",
@@ -117,6 +129,18 @@ void OmniPurePursuitController::configure(
                       adaptive_lookahead_gain_);
   node->get_parameter(plugin_name_ + ".circle_interpolation",
                       circle_interpolation_);
+  node->get_parameter(plugin_name_ + ".rotate_to_heading",
+                      rotate_to_heading_);
+  node->get_parameter(plugin_name_ + ".rotate_to_heading_treshold",
+                      rotate_to_heading_treshold_);
+  node->get_parameter(plugin_name_ + ".max_translation_speed",
+                      max_translation_speed_);
+  node->get_parameter(plugin_name_ + ".min_translation_speed",
+                      min_translation_speed_);
+  node->get_parameter(plugin_name_ + ".max_rotation_speed",
+                      max_rotation_speed_);
+  node->get_parameter(plugin_name_ + ".min_rotation_speed",
+                      min_rotation_speed_);
 
   node->get_parameter("controller_frequency", control_frequency);
 
@@ -136,8 +160,8 @@ void OmniPurePursuitController::configure(
       costmap_);
   collision_checker_->setCostmap(costmap_);
 
-  move_pid = std::make_shared<PID>(control_duration_, 2, -2, moving_kp_, moving_kd_, moving_ki_);
-  heading_pid = std::make_shared<PID>(control_duration_, 2, -2, heading_kp_, heading_kd_, heading_ki_);
+  move_pid = std::make_shared<PID>(control_duration_, max_translation_speed_, min_translation_speed_, translation_kp_, translation_kd_, translation_ki_);
+  heading_pid = std::make_shared<PID>(control_duration_, max_rotation_speed_, min_rotation_speed_, rotation_kp_, rotation_kd_, rotation_ki_);
 }
 
 void OmniPurePursuitController::cleanup() {
@@ -193,18 +217,19 @@ geometry_msgs::msg::TwistStamped OmniPurePursuitController::computeVelocityComma
   auto carrot_pose = getLookAheadPoint(lookahead, transformed_plan);
   auto carrot_msg = createCarrotMsg(carrot_pose);
   carrot_pub_->publish(createCarrotMsg(carrot_pose));
-  // Find distance^2 to look ahead point (carrot) in robot base frame
-  // This is the chord length of the circle
+
   double lin_dist = hypot(carrot_pose.pose.position.x, carrot_pose.pose.position.y);
   double theta_dist = atan2(carrot_pose.pose.position.y, carrot_pose.pose.position.x);
-  double heading_dist = carrot_pose.pose.orientation.z;
-
-  // RCLCPP_INFO(logger_,
-  //             "linear : %lf heading : %lf",
-  //             lin_dist ,heading_dist);
-
+  double angle_to_goal = tf2::getYaw(transformed_plan.poses.back().pose.orientation);
+  
   auto lin_vel = move_pid->calculate(lin_dist,0);
-  auto angular_vel = heading_pid->calculate(heading_dist,0);
+  auto angular_vel = heading_pid->calculate(angle_to_goal,0);
+
+  if(rotate_to_heading_ && fabs(angle_to_goal) > rotate_to_heading_treshold_)
+  {
+    lin_vel = 0;
+  }
+  
   // populate and return message
   geometry_msgs::msg::TwistStamped cmd_vel;
   cmd_vel.header = pose.header;
@@ -217,6 +242,7 @@ geometry_msgs::msg::TwistStamped OmniPurePursuitController::computeVelocityComma
 void OmniPurePursuitController::setPlan(const nav_msgs::msg::Path &path) {
   global_plan_ = path;
 }
+
 
 void OmniPurePursuitController::setSpeedLimit(const double &/*speed_limit*/,
                                           const bool &/*percentage*/) {
@@ -424,18 +450,18 @@ OmniPurePursuitController::dynamicParametersCallback(
     const auto &name = parameter.get_name();
 
     if (type == ParameterType::PARAMETER_DOUBLE) {
-      if (name == plugin_name_ + ".moving_kp") {
-        moving_kp_ = parameter.as_double();
-      } else if (name == plugin_name_ + ".moving_ki") {
-        moving_ki_ = parameter.as_double();
-      } else if (name == plugin_name_ + ".moving_kd") {
-        moving_kd_ = parameter.as_double();
-      } else if (name == plugin_name_ + ".heading_kp") {
-        heading_kp_ = parameter.as_double();
-      } else if (name == plugin_name_ + ".heading_ki") {
-        heading_ki_ = parameter.as_double();
-      } else if (name == plugin_name_ + ".heading_kd") {
-        heading_kd_ = parameter.as_double();
+      if (name == plugin_name_ + ".translation_kp") {
+        translation_kp_ = parameter.as_double();
+      } else if (name == plugin_name_ + ".translation_ki") {
+        translation_ki_ = parameter.as_double();
+      } else if (name == plugin_name_ + ".translation_kd") {
+        translation_kd_ = parameter.as_double();
+      } else if (name == plugin_name_ + ".rotation_kp") {
+        rotation_kp_ = parameter.as_double();
+      } else if (name == plugin_name_ + ".rotation_ki") {
+        rotation_ki_ = parameter.as_double();
+      } else if (name == plugin_name_ + ".rotation_kd") {
+        rotation_kd_ = parameter.as_double();
       } else if (name == plugin_name_ + ".transform_tolerance") {
         double transform_tolerance = parameter.as_double();
         transform_tolerance_ = tf2::durationFromSec(transform_tolerance);

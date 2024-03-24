@@ -154,7 +154,12 @@ protected:
   double getLookAheadDistance(
   const geometry_msgs::msg::Twist & speed);
 
-  std::pair<double, double> PIDUpdate(double kp, double ki, double kd, double error, double sum_error);
+  bool shouldRotateFirst(
+  const geometry_msgs::msg::PoseStamped & carrot_pose, double & angle_to_path);
+
+  void rotateToHeading(
+  double & linear_vel, double & angular_vel,
+  const double & angle_to_path, const geometry_msgs::msg::Twist & curr_speed);
 
   rclcpp_lifecycle::LifecycleNode::WeakPtr node_;
   std::shared_ptr<tf2_ros::Buffer> tf_;
@@ -167,8 +172,8 @@ protected:
   std::shared_ptr<PID> move_pid;
   std::shared_ptr<PID> heading_pid;
   
-  double moving_kp_, moving_ki_, moving_kd_;
-  double heading_kp_, heading_ki_, heading_kd_;
+  double translation_kp_, translation_ki_, translation_kd_;
+  double rotation_kp_, rotation_ki_, rotation_kd_;
   double min_max_sum_error_;
   double control_duration_;
   double max_robot_pose_search_dist_;
@@ -179,6 +184,12 @@ protected:
   double adaptive_max_speed_lookahead_;
   double adaptive_lookahead_gain_;
   bool circle_interpolation_;
+  bool rotate_to_heading_;
+  double rotate_to_heading_treshold_;
+  double max_translation_speed_;
+  double min_translation_speed_;
+  double min_rotation_speed_;
+  double max_rotation_speed_;
   tf2::Duration transform_tolerance_;
  
 
